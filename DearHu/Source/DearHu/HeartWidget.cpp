@@ -159,75 +159,46 @@ void UHeartWidget::UpdateParticles(float DeltaTime)
 
 void UHeartWidget::DrawParticles(FSlateWindowElementList& OutDrawElements, int32& LayerId, const FGeometry& AllottedGeometry) const
 {
-    try
+    FVector2D HeartCenter = AllottedGeometry.GetLocalSize() / 2.0f;
+    
+    // 安全检查：确保Particles数组有效
+    if (Particles.Num() == 0)
     {
-        UE_LOG(LogTemp, Log, TEXT("[HeartWidget] DrawParticles started, Particles.Num(): %d"), Particles.Num());
+        return;
+    }
+    
+    for (const FParticle& Particle : Particles)
+    {
+        // 计算粒子在Widget中的位置
+        FVector2D ParticlePosition = Particle.Position + HeartCenter;
         
-        FVector2D HeartCenter = AllottedGeometry.GetLocalSize() / 2.0f;
-        UE_LOG(LogTemp, Log, TEXT("[HeartWidget] HeartCenter: %f, %f"), HeartCenter.X, HeartCenter.Y);
-        
-        // 安全检查：确保Particles数组有效
-        if (Particles.Num() == 0)
+        // 计算粒子大小和透明度
+        float Size = Particle.Size * (1.0f - Particle.Lifetime / Particle.MaxLifetime);
+        if (Size <= 0.0f || Size > 100.0f)
         {
-            UE_LOG(LogTemp, Log, TEXT("[HeartWidget] No particles to draw"));
-            return;
+            continue; // 限制大小范围
         }
         
-        int32 ParticleCount = 0;
-        for (const FParticle& Particle : Particles)
+        // 确保位置有效
+        if (ParticlePosition.X < -10000 || ParticlePosition.X > 10000 ||
+            ParticlePosition.Y < -10000 || ParticlePosition.Y > 10000)
         {
-            // 计算粒子在Widget中的位置
-            FVector2D ParticlePosition = Particle.Position + HeartCenter;
-            
-            // 计算粒子大小和透明度
-            float Size = Particle.Size * (1.0f - Particle.Lifetime / Particle.MaxLifetime);
-            if (Size <= 0.0f || Size > 100.0f)
-            {
-                continue; // 限制大小范围
-            }
-            
-            // 确保位置有效
-            if (ParticlePosition.X < -10000 || ParticlePosition.X > 10000 ||
-                ParticlePosition.Y < -10000 || ParticlePosition.Y > 10000)
-            {
-                continue;
-            }
-            
-            FColor ParticleColor = Particle.Color;
-            ParticleColor.A = (uint8)FMath::Clamp((1.0f - Particle.Lifetime / Particle.MaxLifetime) * 255, 0.0f, 255.0f);
-            
-            // 绘制粒子（使用Box）
-            FVector2D Position = ParticlePosition - FVector2D(Size / 2.0f, Size / 2.0f);
-            FVector2D BoxSize = FVector2D(Size, Size);
-            
-            // 直接使用MakeLines来绘制粒子，避免MakeBox的崩溃问题
-            TArray<FVector2D> ParticlePoints;
-            ParticlePoints.Add(Position);
-            ParticlePoints.Add(Position + BoxSize);
-            
-            if (ParticlePoints.Num() > 1)
-            {
-                try
-                {
-                    FSlateDrawElement::MakeLines(OutDrawElements, LayerId++, AllottedGeometry.ToPaintGeometry(), ParticlePoints, ESlateDrawEffect::None, ParticleColor, true, Size);
-                    ParticleCount++;
-                }
-                catch (...) 
-                {
-                    UE_LOG(LogTemp, Error, TEXT("[HeartWidget] Failed to draw particle %d"), ParticleCount);
-                }
-            }
+            continue;
         }
         
-        UE_LOG(LogTemp, Log, TEXT("[HeartWidget] DrawParticles finished, drew %d particles"), ParticleCount);
-    }
-    catch (const std::exception& e)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[HeartWidget] Exception in DrawParticles: %s"), ANSI_TO_TCHAR(e.what()));
-    }
-    catch (...)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[HeartWidget] Unknown exception in DrawParticles"));
+        FColor ParticleColor = Particle.Color;
+        ParticleColor.A = (uint8)FMath::Clamp((1.0f - Particle.Lifetime / Particle.MaxLifetime) * 255, 0.0f, 255.0f);
+        
+        // 优化：简化粒子绘制，使用更高效的方式
+        TArray<FVector2D> ParticlePoints;
+        FVector2D Position = ParticlePosition - FVector2D(Size / 2.0f, Size / 2.0f);
+        ParticlePoints.Add(Position);
+        ParticlePoints.Add(Position + FVector2D(Size, Size));
+        
+        if (ParticlePoints.Num() > 1)
+        {
+            FSlateDrawElement::MakeLines(OutDrawElements, LayerId++, AllottedGeometry.ToPaintGeometry(), ParticlePoints, ESlateDrawEffect::None, ParticleColor, true, Size);
+        }
     }
 }
 
@@ -321,65 +292,42 @@ void UHeartWidget::DrawStaticParticles(FSlateWindowElementList& OutDrawElements,
                 continue;
             }
             
-            // 增强的光晕效果，使其更模糊
-            float GlowSize = Particle.Size * StaticParticleGlowRadius; // 使用参数控制光晕大小
-            FVector2D GlowCenter = ParticlePosition;
-            FColor GlowColor = Particle.Color;
-            GlowColor.A = 30; // 进一步降低透明度，使光晕更模糊
+            // 合并光晕效果和静态粒子，使静态粒子本身带有光晕效果
+            FVector2D Center = ParticlePosition;
             
-            // 绘制多层光晕，从内到外逐渐变大变透明，使用同心圆方式
-            const int32 NumGlowRings = 15; // 光晕的同心圆数量
-            for (int32 ring = 0; ring < NumGlowRings; ring++)
+            // 计算最大半径（包含光晕）
+            float MaxRadius = Particle.Size * StaticParticleGlowRadius;
+            
+            // 绘制合并后的粒子（从外到内）
+            const int32 NumRings = 10; // 合并后的圆环数量
+            for (int32 ring = 0; ring < NumRings; ring++)
             {
-                float RingSize = Particle.Size + (GlowSize - Particle.Size) * (float)ring / (float)NumGlowRings;
+                // 计算当前圆环的半径，从最大（光晕外边缘）到最小（粒子中心）
+                float RingSize = MaxRadius * (1.0f - (float)ring / (float)NumRings);
                 
-                // 计算当前圆环的透明度，从内到外逐渐降低
-                float Alpha = 30.0f * (1.0f - (float)ring / (float)NumGlowRings);
-                if (Alpha < 5.0f) Alpha = 5.0f;
+                // 计算当前圆环的透明度
+                float Alpha;
+                if (RingSize > Particle.Size)
+                {
+                    // 光晕部分：从外到内逐渐变亮
+                    float GlowRatio = (RingSize - Particle.Size) / (MaxRadius - Particle.Size);
+                    Alpha = 30.0f * (1.0f - GlowRatio);
+                    if (Alpha < 5.0f) Alpha = 5.0f;
+                }
+                else
+                {
+                    // 粒子核心部分：保持较高透明度
+                    float CoreRatio = RingSize / Particle.Size;
+                    Alpha = 255.0f * CoreRatio;
+                    if (Alpha < 100.0f) Alpha = 100.0f;
+                }
                 
                 FColor RingColor = Particle.Color;
                 RingColor.A = (uint8)Alpha;
                 
-                TArray<FVector2D> GlowPoints;
-                const int32 NumGlowPoints = 16;
-                for (int32 j = 0; j <= NumGlowPoints; j++)
-                {
-                    float Angle = (float)j / (float)NumGlowPoints * 3.14159f * 2.0f;
-                    float X = GlowCenter.X + FMath::Cos(Angle) * RingSize / 2.0f;
-                    float Y = GlowCenter.Y + FMath::Sin(Angle) * RingSize / 2.0f;
-                    GlowPoints.Add(FVector2D(X, Y));
-                }
-                
-                if (GlowPoints.Num() > 1)
-                {
-                    try
-                    {
-                        FSlateDrawElement::MakeLines(OutDrawElements, LayerId++, AllottedGeometry.ToPaintGeometry(), GlowPoints, ESlateDrawEffect::None, RingColor, true, 1.5f);
-                    }
-                    catch (...) 
-                    {
-                    }
-                }
-            }
-            
-            // 绘制粒子的实心圆形（使用多个同心圆模拟）
-            float Size = Particle.Size;
-            FVector2D Center = ParticlePosition;
-            
-            // 绘制多个同心圆来模拟实心效果，并从中心到外围逐渐模糊
-            const int32 NumRings = 10; // 增加同心圆数量，获得更平滑的过渡
-            for (int32 ring = 0; ring < NumRings; ring++)
-            {
-                float RingSize = Size * (float)(ring + 1) / (float)NumRings;
+                // 生成圆形点
                 TArray<FVector2D> CirclePoints;
-                const int32 NumCirclePoints = 16; // 圆形的边数
-                
-                // 计算当前圆环的透明度，从中心到外围逐渐降低到接近透明
-                float Alpha = 1.0f - (float)ring / (float)NumRings * 0.95f; // 从1.0到0.05的透明度渐变，避免最外圈出现明显圆环
-                if (Alpha < 0.05f) Alpha = 0.05f; // 确保最内层有足够的透明度
-                FColor RingColor = Particle.Color;
-                RingColor.A = (uint8)(Alpha * 255);
-                
+                const int32 NumCirclePoints = 12; // 圆形的边数
                 for (int32 j = 0; j <= NumCirclePoints; j++)
                 {
                     float Angle = (float)j / (float)NumCirclePoints * 3.14159f * 2.0f;
@@ -390,13 +338,7 @@ void UHeartWidget::DrawStaticParticles(FSlateWindowElementList& OutDrawElements,
                 
                 if (CirclePoints.Num() > 1)
                 {
-                    try
-                    {
-                        FSlateDrawElement::MakeLines(OutDrawElements, LayerId++, AllottedGeometry.ToPaintGeometry(), CirclePoints, ESlateDrawEffect::None, RingColor, true, 1.2f); // 减小线条宽度，使边缘更柔和
-                    }
-                    catch (...) 
-                    {
-                    }
+                    FSlateDrawElement::MakeLines(OutDrawElements, LayerId++, AllottedGeometry.ToPaintGeometry(), CirclePoints, ESlateDrawEffect::None, RingColor, true, 1.2f);
                 }
             }
         }
