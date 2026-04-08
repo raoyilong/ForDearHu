@@ -327,6 +327,41 @@ void UHeartWidget::DrawStaticParticles(FSlateWindowElementList& OutDrawElements,
             FColor GlowColor = Particle.Color;
             GlowColor.A = 30; // 进一步降低透明度，使光晕更模糊
             
+            // 绘制多层光晕，从内到外逐渐变大变透明，使用同心圆方式
+            const int32 NumGlowRings = 15; // 光晕的同心圆数量
+            for (int32 ring = 0; ring < NumGlowRings; ring++)
+            {
+                float RingSize = Particle.Size + (GlowSize - Particle.Size) * (float)ring / (float)NumGlowRings;
+                
+                // 计算当前圆环的透明度，从内到外逐渐降低
+                float Alpha = 30.0f * (1.0f - (float)ring / (float)NumGlowRings);
+                if (Alpha < 5.0f) Alpha = 5.0f;
+                
+                FColor RingColor = Particle.Color;
+                RingColor.A = (uint8)Alpha;
+                
+                TArray<FVector2D> GlowPoints;
+                const int32 NumGlowPoints = 16;
+                for (int32 j = 0; j <= NumGlowPoints; j++)
+                {
+                    float Angle = (float)j / (float)NumGlowPoints * 3.14159f * 2.0f;
+                    float X = GlowCenter.X + FMath::Cos(Angle) * RingSize / 2.0f;
+                    float Y = GlowCenter.Y + FMath::Sin(Angle) * RingSize / 2.0f;
+                    GlowPoints.Add(FVector2D(X, Y));
+                }
+                
+                if (GlowPoints.Num() > 1)
+                {
+                    try
+                    {
+                        FSlateDrawElement::MakeLines(OutDrawElements, LayerId++, AllottedGeometry.ToPaintGeometry(), GlowPoints, ESlateDrawEffect::None, RingColor, true, 1.5f);
+                    }
+                    catch (...) 
+                    {
+                    }
+                }
+            }
+            
             // 绘制粒子的实心圆形（使用多个同心圆模拟）
             float Size = Particle.Size;
             FVector2D Center = ParticlePosition;
